@@ -31,3 +31,10 @@ services:
       # === Embedding：默认本地 BGE + HF 国内镜像 ===
       - HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
       - HF_ENDPOINT=https://hf-mirror.com
+
+      # === Reranker：默认 cross-encoder/ms-marco-MiniLM-L-6-v2 是英文训练的，
+      # 对中文返回随机高分（黑洞 query 召回张伟 facts rerank=0.99 是 broken）。
+      # 切到阿里云百炼 qwen3-rerank（多语言，针对中文优化），复用同一把 DashScope key。
+      - HINDSIGHT_API_RERANKER_PROVIDER=alibaba
+      - HINDSIGHT_API_RERANKER_ALIBABA_API_KEY=${BAILIAN_API_KEY}
+      - HINDSIGHT_API_RERANKER_ALIBABA_MODEL=qwen3-rerank

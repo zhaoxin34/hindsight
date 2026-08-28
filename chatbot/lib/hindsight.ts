@@ -52,6 +52,19 @@ export interface RecallOptions {
   preferObservations?: boolean;
   includeEntities?: boolean;
   queryTimestamp?: string;
+  /**
+   * Per-stage score floors. We default to `{ reranker: 0.3 }` so that recall
+   * drops facts the cross-encoder considers irrelevant — without this, every
+   * query (including totally unrelated ones like "什么是黑洞？") padded up to
+   * budget with low-relevance facts that confuse the UI and waste tokens.
+   * Override to `{}` to disable.
+   */
+  minScores?: {
+    semantic?: number;
+    keyword?: number;
+    reranker?: number;
+    final?: number;
+  };
 }
 
 export interface RetainItem {
@@ -131,6 +144,9 @@ export async function recallMemories(
         entities:
           options.includeEntities !== false ? { max_tokens: 500 } : false,
       },
+      // Drop facts the reranker scores below the floor. Default 0.3 keeps
+      // only "actually relevant" results; pass `{}` to disable.
+      min_scores: options.minScores ?? { reranker: 0.3 },
       ...(options.queryTimestamp
         ? { query_timestamp: options.queryTimestamp }
         : {}),

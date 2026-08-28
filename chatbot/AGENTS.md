@@ -85,8 +85,6 @@ chatbot/
 └── README.md                       # Next.js 自带 README（占位）
 ```
 
-**遵循 Next.js App Router 约定**（不强行把代码挪进 `src/`——框架默认就是 `app/`+`lib/` 在根）。
-
 ---
 
 ## 关键文件职责
@@ -165,6 +163,16 @@ dev 模式可以省略（每次重启都新 ID），但生产部署前必须设�
 ### 5. `HINDSIGHT_API_URL` 在 Next.js 服务端用
 
 浏览器**不知道** Hindsight 在哪。所有 recall/retain 都从 Next.js route handler 发起 server-to-server 调用。
+
+### 6. `min_scores.reranker=0.3` 默认过滤低相关 facts
+
+`lib/hindsight.ts` 默认在请求里加 `min_scores: { reranker: 0.3 }`，把 cross-encoder 认为不相关的事实过滤掉。
+
+**设计意图**：Hindsight 在 budget 模式下会把召回结果 padding 到预算上限（即使没有真正相关的事实）。如果不加这个 floor，无关 query（比如"什么是黑洞？"）会返回 3 条关于张伟的事实、LLM 被 noise 干扰、UI折叠区也会展示无关内容。
+
+**取舍**：阈值 0.3 是经验值。**代价**：中等相关但分数略低（<0.3）的事实会被过滤掉，需要根据实际效果调。**禁用**：传 `{ minScores: {} }` 给 `recallMemories()` 即可关闭。
+
+**后端联动**：`docker-compose.yml` 里 Hindsight 用了 `HINDSIGHT_API_RERANKER_PROVIDER=alibaba` + `qwen3-rerank`。默认 `local` 是 `cross-encoder/ms-marco-MiniLM-L-6-v2`（英文 MS MARCO 训练），对中文返回随机高分（黑洞 query 召回张伟 facts rerank=0.99 是 bug），换 `qwen3-rerank` 才正常。
 
 ---
 

@@ -146,17 +146,18 @@ Done 标准：
 
 增补设计（Q1 已确定）：
 - **方式**：LLM prompt 注入 recall 结果（自然融合）+ UI 折叠区显式展示"参考记忆"
-- **recall 配置**：`types=["observation","world"]` + `prefer_observations=true`（避免 observation 与 raw fact 重复）+ `budget="mid"` + `max_tokens=2048` + `include.entities=true`
+- **recall 配置**：`types=["observation","world"]` + `prefer_observations=true`（避免 observation 与 raw fact 重复）+ `budget="mid"` + `max_tokens=2048` + `include.entities=true` + `min_scores.reranker=0.3`（过滤低相关 noise）
 - **同步执行**：recall 与 LLM 答同步进行，不异步；用户期望"问一次答一次"
 - **UI 展示**：主答案下方折叠区，默认收起，列出 recall 返回的具体 facts + entities + scores；标注"🤖 基于你的长期记忆回答"
+- **Hindsight 部署态**：`HINDSIGHT_API_RERANKER_PROVIDER=alibaba` + `qwen3-rerank`（默认 `local` ms-marco-MiniLM 对中文 broken）
 
 Done 标准：
-- [ ] 用户发问 → recall(Q) 同步 → LLM 用注入的 recall 结果答 → 主答案下方展示"参考记忆"折叠区
-- [ ] recall 空时双层校验依然工作（仅 LLM 答，无增补，无折叠区）
-- [ ] recall 命中时折叠区显示具体 facts + entities + scores
-- [ ] observation 与 raw fact 不重复（prefer_observations=true 生效）
-- [ ] 中文 / 英文 recall 都验证过
-- [ ] 同一问题连续问 5 次，recall 召回稳定（无大幅波动）
+- [x] 用户发问 → recall(Q) 同步 → LLM 用注入的 recall 结果答 → 主答案下方展示"参考记忆"折叠区
+- [x] recall 空时双层校验依然工作（仅 LLM 答，无增补，无折叠区）— 由 `min_scores.reranker=0.3` 保证
+- [x] recall 命中时折叠区显示具体 facts + entities + scores
+- [x] observation 与 raw fact 不重复（prefer_observations=true 生效）
+- [x] 中文 / 英文 recall 都验证过
+- [x] 同一问题连续问 5 次，recall 召回稳定（无大幅波动）
 
 ---
 
