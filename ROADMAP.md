@@ -80,6 +80,7 @@ graph TB
 | 访谈触发条件 | Hindsight recall 空 + LLM 也不确定 | "不确定"的具体定义见 Q1 |
 | 访谈深度 | **自适应**：简单事实单轮 / 抽象知识多轮（3-5 轮） | 由 Complexity Classifier 决定 |
 | 萃取 + retain | 访谈 Agent 生成**知识卡** → **用户审核** → retain | 用户必须显式确认才落库 |
+| **技术架构**（演进式）| Phase 1-2 用 **Vercel AI SDK**；Phase 3+ 引入 **Mastra Workflow 引擎** | **不使用 Mastra Memory**（Hindsight 已是记忆后端，避免重复） |
 
 ---
 
@@ -140,14 +141,22 @@ Done 标准：
 **目标**：主 Agent 实现"LLM 答 + Hindsight 增补"
 
 涉及模块：
-- MA-1 主 Agent
+- MA-1 主 Agent（**技术栈：Vercel AI SDK** — `streamText` + `tool` + `useChat`）
 - MA-2 Async Recall
 
+增补设计（Q1 已确定）：
+- **方式**：LLM prompt 注入 recall 结果（自然融合）+ UI 折叠区显式展示"参考记忆"
+- **recall 配置**：`types=["observation","world"]` + `prefer_observations=true`（避免 observation 与 raw fact 重复）+ `budget="mid"` + `max_tokens=2048` + `include.entities=true`
+- **同步执行**：recall 与 LLM 答同步进行，不异步；用户期望"问一次答一次"
+- **UI 展示**：主答案下方折叠区，默认收起，列出 recall 返回的具体 facts + entities + scores；标注"🤖 基于你的长期记忆回答"
+
 Done 标准：
-- [ ] 用户发问 → LLM 答 → 异步 recall 把 Hindsight 相关 facts 显示为"补充信息"
-- [ ] recall 空时双层校验依然工作（仅 LLM 答，无增补）
-- [ ] recall 命中时能看到具体哪些 fact 被命中（带溯源）
-- [ ] **明确"增补"的具体语义**（Q1）
+- [ ] 用户发问 → recall(Q) 同步 → LLM 用注入的 recall 结果答 → 主答案下方展示"参考记忆"折叠区
+- [ ] recall 空时双层校验依然工作（仅 LLM 答，无增补，无折叠区）
+- [ ] recall 命中时折叠区显示具体 facts + entities + scores
+- [ ] observation 与 raw fact 不重复（prefer_observations=true 生效）
+- [ ] 中文 / 英文 recall 都验证过
+- [ ] 同一问题连续问 5 次，recall 召回稳定（无大幅波动）
 
 ---
 
@@ -174,6 +183,7 @@ Done 标准：
 - IA-2 Complexity Classifier（升级：判断复杂度）
 - IA-3 Interview Strategy（**核心**：怎么追问）
 - IA-6 Dialogue State（升级：多轮 session）
+- **Mastra Workflow 引擎**（**Phase 3 引入**）— 处理访谈挂起等待用户 + 持久化状态 + 重入
 
 Done 标准：
 - [ ] 抽象问题（"为什么这样设计"）能追问 3-5 轮
@@ -252,7 +262,7 @@ Done 标准：
 
 | # | 问题 | 触发时机 | 状态 |
 |---|---|---|---|
-| Q1 | "Hindsight 增补"的具体语义：注入 prompt / 单独展示 / 二者结合？ | Phase 1 设计前 | 待讨论 |
+| Q1 | "Hindsight 增补"的具体语义：注入 prompt / 单独展示 / 二者结合？ | Phase 1 设计前 | ✅ 已解决 |
 | Q2 | 访谈 Agent 用什么 model？复用主 Agent 还是另起？ | Phase 2 设计前 | 待讨论 |
 | Q3 | 知识卡 schema：自定义 / 复用现有标准（Dublin Core 等）？ | Phase 4 设计前 | 待讨论 |
 | Q4 | 用户多次访谈同一主题，前后矛盾怎么办？ | Phase 3 实施时 | 待讨论 |
