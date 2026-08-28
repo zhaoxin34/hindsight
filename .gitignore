@@ -1,0 +1,52 @@
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- 编辑器 ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- pi 本地工具配置（不提交）---
+.agents/
+skills-lock.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- Node ---
+node_modules/
+dist/
+.next/
+
+# --- 环境变量 ---
+.env
+.env.local
+.env.*.local
+*.env.local
+
+# --- 日志 ---
+*.log
+logs/
+
+# --- 运行时数据 ---
+pgdata/
+.hindsight/
+
+# --- Docker（compose 文件本身要提交）---
+.docker-volumes/

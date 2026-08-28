@@ -1,0 +1,33 @@
+services:
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    container_name: hindsight
+    restart: unless-stopped
+
+    ports:
+      - "8888:8888" # API
+      - "9999:9999" # Web UI (Control Plane)
+
+    # Linux 下走 host.docker.internal 访问宿主机的 PG；macOS Docker Desktop 默认就支持
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    environment:
+      # === DB：复用宿主机上独立的 PG 容器（已经在另一个 compose 里跑着）===
+      - HINDSIGHT_API_DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/hindsight
+      - HINDSIGHT_API_VECTOR_EXTENSION=pgvector
+
+      # === Worker ID 必须固定，否则容器重启后任务变孤儿 ===
+      - HINDSIGHT_API_WORKER_ID=hindsight-dev
+
+      # === LLM：阿里云百炼（DashScope）OpenAI 兼容模式 ===
+      - HINDSIGHT_API_LLM_PROVIDER=openai
+      - HINDSIGHT_API_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+      - HINDSIGHT_API_LLM_API_KEY=${BAILIAN_API_KEY}
+      - HINDSIGHT_API_LLM_MODEL=qwen-plus
+      # qwen-plus max_tokens 上限 32768，Hindsight 默认 64000 会 400；降到 16000
+      - HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS=16000
+
+      # === Embedding：默认本地 BGE + HF 国内镜像 ===
+      - HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
+      - HF_ENDPOINT=https://hf-mirror.com

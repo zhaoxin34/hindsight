@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Hindsight Chatbot pre-commit hook
+# 职责：
+#   1. 阻止提交大文件 (>50MB)
+#   2. 阻止提交疑似敏感信息 (API keys, tokens, AWS keys 等)
+
+set -e
+
+MAX_FILE_SIZE_MB=50
+
+# 疑似敏感信息正则
+BLOCKED_PATTERNS=(
+    'BAILIAN_API_KEY=[A-Za-z0-9-]{20,}'
+    'DASHSCOPE_API_KEY=[A-Za-z0-9-]{20,}'
+    'sk-[A-Za-z0-9]{20,}'
+    'sk-f[A-Za-z0-9]{20,}'
+    'AKIA[0-9A-Z]{16}'
+    'ghp_[A-Za-z0-9]{30,}'
+    'gho_[A-Za-z0-9]{30,}'
+    'ghu_[A-Za-z0-9]{30,}'
+    'ghs_[A-Za-z0-9]{30,}'
+    'ghr_[A-Za-z0-9]{30,}'
+)
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$staged_files" ]; then
+    exit 0
+fi
+
+# ---- 1. 大文件检查 ----
+echo -e "${YELLOW}🔍 检查大文件 (阈值 ${MAX_FILE_SIZE_MB}MB)...${NC}"
+for file in $staged_files; do
+    if [ -f "$file" ]; then
+        if [ "$(uname)" = "Darwin" ]; then
+            size=$(stat -f%z "$file")
+        else
+            size=$(stat -c%s "$file")
+        fi
+        size_mb=$((size / 1024 / 1024))
+        if [ "$size_mb" -gt "$MAX_FILE_SIZE_MB" ]; then
+            echo -e "${RED}❌ 文件 $file 大小 ${size_mb}MB 超过 ${MAX_FILE_SIZE_MB}MB 阈值${NC}"
+            exit 1
+        fi
+    fi
+done
+
+# ---- 2. 敏感信息检查 ----
+echo -e "${YELLOW}🔍 检查疑似敏感信息...${NC}"
+for file in $staged_files; do
+    if [ -f "$file" ] && [[ "$file" =~ \.(md|yml|yaml|json|txt|env|sh|py|js|ts|tsx|jsx|toml|cfg|ini)$ ]]; then
+        for pattern in "${BLOCKED_PATTERNS[@]}"; do
+            if grep -qE "$pattern" "$file" 2>/dev/null; then
+                echo -e "${RED}❌ 文件 $file 包含疑似敏感信息 (pattern: $pattern)${NC}"
+                echo -e "${RED}   请改用环境变量或从代码中移除${NC}"
+                exit 1
+            fi
+        done
+    fi
+done
+
+echo -e "${GREEN}✅ Pre-commit 检查通过${NC}"
+exit 0
