@@ -2,13 +2,25 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RecallResponse } from "@/lib/hindsight";
 
-// Shape of a `data-recall` part as written by app/api/chat/route.ts.
-// We type it locally because the AI SDK v5 strict UIMessage data typing
-// is not worth registering globally for a single data part.
+// Shape of `data-recall` and `data-interview-state` parts as written by
+// app/api/chat/route.ts. We type them locally because the AI SDK v5 strict
+// UIMessage data typing is not worth registering globally for two parts.
 type RecallPart = { type: "data-recall"; id?: string; data: RecallResponse };
+
+type InterviewState = {
+  awaitingAnswer: true;
+  query: string;
+  askedAt: number;
+};
+
+type InterviewStatePart = {
+  type: "data-interview-state";
+  id?: string;
+  data: InterviewState;
+};
 
 function isRecallPart(part: unknown): part is RecallPart {
   return (
@@ -18,8 +30,26 @@ function isRecallPart(part: unknown): part is RecallPart {
   );
 }
 
+function isInterviewStatePart(part: unknown): part is InterviewStatePart {
+  return (
+    typeof part === "object" &&
+    part !== null &&
+    (part as { type?: unknown }).type === "data-interview-state"
+  );
+}
+
+interface InterviewPair {
+  question: string;
+  answer: string;
+}
+
 export default function Home() {
   const [input, setInput] = useState("");
+  const [interviewPairs, setInterviewPairs] = useState<InterviewPair[]>([]);
+  const [retainStatus, setRetainStatus] = useState<
+    "idle" | "sending" | "ok" | "err"
+  >("idle");
+  const [retainMessage, setRetainMessage] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const transport = useMemo(
@@ -29,21 +59,102 @@ export default function Home() {
 
   const { messages, sendMessage, status, error } = useChat({ transport });
 
+  // Detect interview mode: the most recent assistant message carries a
+  // `data-interview-state` part. While true, every user submission is
+  // considered an *answer* (its question is the most recent assistant text).
+  const interviewMode = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== "assistant") continue;
+      // SAFETY: AI SDK v5's strict UIMessage data typing doesn't expose
+      // `parts` in all minor versions; the runtime shape is stable.
+      const parts = (m as unknown as { parts: ReadonlyArray<unknown> }).parts;
+      if (parts && parts.some(isInterviewStatePart)) return true;
+    }
+    return false;
+  }, [messages]);
+
+  // When the user submits in interview mode, snapshot (most-recent assistant
+  // text → current user text) as a Q/A pair. We mirror `interviewMode` into
+  // a ref via effect so the callback closure can read the latest value
+  // without re-binding on every render.
+  const interviewModeRef = useRef(interviewMode);
+  useEffect(() => {
+    interviewModeRef.current = interviewMode;
+  }, [interviewMode]);
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text) return;
+
+    if (interviewModeRef.current) {
+      const lastAssistant = [...messages]
+        .reverse()
+        .find((m) => m.role === "assistant");
+      // SAFETY: AI SDK v5's strict UIMessage data typing doesn't expose
+      // `parts` in all minor versions; the runtime shape is stable.
+      const question =
+        lastAssistant &&
+        extractText(
+          (lastAssistant as unknown as { parts: ReadonlyArray<unknown> })
+            .parts,
+        ).trim();
+      if (question) {
+        setInterviewPairs((prev) => [...prev, { question, answer: text }]);
+      }
+    }
+
+    sendMessage({ text });
+    setInput("");
+  };
+
+  // Reset retain banner when conversation shifts away from interview mode
+  // (e.g. user clicked 完成 successfully — next /api/chat will likely
+  // switch back to main flow if recall now hits).
+  useEffect(() => {
+    if (!interviewMode && retainStatus !== "idle") {
+      // Don't reset on success: we want the success banner to persist until
+      // the user starts typing again.
+    }
+  }, [interviewMode, retainStatus]);
+
   // Auto-scroll to the bottom when new messages arrive.
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [messages]);
+  }, [messages, interviewPairs.length]);
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    const text = input.trim();
-    if (!text) return;
-    sendMessage({ text });
-    setInput("");
-  };
+  const handleFinishInterview = useCallback(async () => {
+    if (interviewPairs.length === 0 || retainStatus === "sending") return;
+    setRetainStatus("sending");
+    setRetainMessage("");
+    try {
+      const res = await fetch("/api/interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: interviewPairs }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        items_count?: number;
+        error?: string;
+      };
+      if (!res.ok || !payload.success) {
+        setRetainStatus("err");
+        setRetainMessage(payload.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      setRetainStatus("ok");
+      setRetainMessage(`已记录 ${payload.items_count ?? interviewPairs.length} 条知识`);
+      setInterviewPairs([]);
+    } catch (err) {
+      setRetainStatus("err");
+      setRetainMessage(err instanceof Error ? err.message : String(err));
+    }
+  }, [interviewPairs, retainStatus]);
 
   return (
     <div className="flex h-full flex-col bg-zinc-50 dark:bg-zinc-950">
@@ -52,7 +163,9 @@ export default function Home() {
           Hindsight Chatbot
         </h1>
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          双层校验：LLM 直答 + Hindsight 长期记忆增补
+          {interviewMode
+            ? "访谈模式：系统在记录你的回答，点「完成」存入长期记忆"
+            : "双层校验：LLM 直答 + Hindsight 长期记忆增补"}
         </p>
       </header>
 
@@ -61,7 +174,7 @@ export default function Home() {
         className="flex-1 overflow-y-auto px-4 py-6 sm:px-6"
       >
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
-          {messages.length === 0 && <EmptyState />}
+          {messages.length === 0 && !interviewMode && <EmptyState />}
 
           {messages.map(
             (m: {
@@ -87,9 +200,25 @@ export default function Home() {
               </div>
             )}
 
+          {interviewMode && interviewPairs.length > 0 && (
+            <InterviewPairList pairs={interviewPairs} />
+          )}
+
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
               出错了：{error.message}
+            </div>
+          )}
+
+          {retainStatus === "ok" && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
+              ✅ {retainMessage}。下次问类似问题应该能直接召回。
+            </div>
+          )}
+
+          {retainStatus === "err" && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+              落库失败：{retainMessage}
             </div>
           )}
         </div>
@@ -102,17 +231,39 @@ export default function Home() {
         >
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              if (retainStatus !== "idle") {
+                setRetainStatus("idle");
+                setRetainMessage("");
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 handleSubmit(e);
               }
             }}
-            placeholder="问我任何问题…  （Enter 发送，Shift+Enter 换行）"
+            placeholder={
+              interviewMode
+                ? "输入你的回答…  （Enter 发送，Shift+Enter 换行）"
+                : "问我任何问题…  （Enter 发送，Shift+Enter 换行）"
+            }
             rows={1}
             className="flex-1 resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-zinc-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50"
           />
+          {interviewMode && (
+            <button
+              type="button"
+              onClick={handleFinishInterview}
+              disabled={
+                interviewPairs.length === 0 || retainStatus === "sending"
+              }
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-40"
+            >
+              {retainStatus === "sending" ? "落库中…" : `完成${interviewPairs.length > 0 ? ` (${interviewPairs.length})` : ""}`}
+            </button>
+          )}
           <button
             type="submit"
             disabled={!input.trim() || status !== "ready"}
@@ -149,6 +300,41 @@ function Dot({ delay }: { delay: string }) {
   );
 }
 
+function InterviewPairList({ pairs }: { pairs: ReadonlyArray<InterviewPair> }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 px-4 py-3 text-sm dark:border-emerald-900 dark:bg-emerald-950/30">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 text-left font-medium text-emerald-800 dark:text-emerald-200"
+      >
+        <span>🟢 本轮访谈暂存 ({pairs.length} 条)</span>
+        <span className="text-[10px]">{open ? "收起 ▲" : "展开 ▼"}</span>
+      </button>
+      {open && (
+        <ol className="mt-2 flex flex-col gap-2 text-xs text-emerald-900 dark:text-emerald-100">
+          {pairs.map((p, i) => (
+            <li
+              key={i}
+              className="rounded-md bg-white/60 px-3 py-2 dark:bg-zinc-900/50"
+            >
+              <div className="text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                Q{i + 1}
+              </div>
+              <div className="whitespace-pre-wrap">{p.question}</div>
+              <div className="mt-1 text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                A{i + 1}
+              </div>
+              <div className="whitespace-pre-wrap">{p.answer}</div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function MessageBubble({
   message,
 }: {
@@ -156,6 +342,7 @@ function MessageBubble({
 }) {
   const text = extractText(message.parts);
   const recallPart = message.parts.find(isRecallPart);
+  const interviewPart = message.parts.find(isInterviewStatePart);
 
   const isUser = message.role === "user";
 
@@ -172,6 +359,12 @@ function MessageBubble({
 
         {recallPart && recallPart.data.results.length > 0 && (
           <RecallSection recall={recallPart.data} />
+        )}
+
+        {!isUser && interviewPart && (
+          <div className="mt-3 border-t border-emerald-200 pt-3 text-xs text-emerald-700 dark:border-emerald-900 dark:text-emerald-300">
+            🟢 访谈中：系统在记录你的回答
+          </div>
         )}
       </div>
     </div>
