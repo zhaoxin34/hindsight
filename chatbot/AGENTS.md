@@ -11,7 +11,13 @@
 
 - 用户问 → 同步 recall → 把 facts 注入 system prompt → LLM 自然融合 → 答案下方挂一个"📚 参考记忆"折叠区（默认收起）
 
-Phase 2+ 会引入**专家访谈 Agent**（recall 空 + LLM 不确定时触发反问，把隐性知识萃取进 Hindsight），见 `../ROADMAP.md`。
+**Phase 2 v1 已实现：专家访谈 Agent（单轮基础版）**
+
+- recall 空 → mode-router 选 `interview` composer → 同步 recall → 反问用户一次 → UI 累积 Q/A pair
+- 用户点「完成」 → UI POST `/api/interview` → 后端 retain 到 Hindsight（一次性落库，Phase 5 才加审核）
+- 下次问同一问题，recall 能命中 → mode-router 回到 `main` composer
+
+Phase 3+ 会引入多轮访谈、复杂度分类器、持久化 session，见 `../ROADMAP.md`。
 
 ---
 
@@ -38,38 +44,47 @@ Phase 2+ 会引入**专家访谈 Agent**（recall 空 + LLM 不确定时触发�
 ```mermaid
 flowchart TB
     User([User])
-    Page["app/page.tsx<br/>useChat"]
-    Route["app/api/chat/route.ts<br/>thin adapter<br/>装配 deps"]
-    Composer["lib/chat/composer.ts<br/>composeChat<br/>★ DI seam"]
-    Extract["extractUserQuery<br/>纯函数"]
+    Page["app/page.tsx<br/>useChat + interview mode"]
+    ChatRoute["app/api/chat/route.ts<br/>dispatch<br/>main ↔ interview"]
+    InterviewRoute["app/api/interview/route.ts<br/>retain Q/A pairs"]
+    Router["lib/chat/mode-router.ts<br/>decideMode(recall)"]
+    MainComp["lib/chat/composer.ts<br/>composeChat<br/>★ DI seam"]
+    InterviewComp["lib/chat/interview/composer.ts<br/>composeInterview"]
+    InterviewPrompt["lib/chat/interview/prompts.ts<br/>buildInterviewPrompt"]
+    Extract["extractUserQuery"]
     Recall["lib/hindsight.ts<br/>buildRecallRequestBody<br/>+ recallMemories"]
-    Hindsight[(Hindsight<br/>localhost:8888)]
-    Prompt["lib/system-prompt.ts<br/>buildSystemPrompt"]
-    Stream["streamText<br/>+ createUIMessageStream"]
-    LLM[阿里云百炼<br/>qwen-plus]
+    Hindsight[(Hindsight)]
+    MainPrompt["lib/system-prompt.ts<br/>buildSystemPrompt"]
+    LLM[阿里云百炼 qwen-plus]
 
     User -->|输入| Page
-    Page -->|"POST /api/chat<br/>{messages}"| Route
-    Route -->|composeChat(messages, deps)| Composer
-    Composer -->|1. 抽 query| Extract
-    Composer -->|2. recall query| Recall
+    Page -->|"POST /api/chat<br/>{messages}"| ChatRoute
+    ChatRoute -->|extractUserQuery| Extract
+    ChatRoute -->|recall query| Recall
     Recall -->|POST /v1/.../recall| Hindsight
-    Hindsight -->|RecallResponse| Recall
-    Composer -->|3. recall| Prompt
-    Prompt -->|中文 system message| Composer
-    Composer -->|4. streamText| Stream
-    Stream -->|TextDelta| LLM
-    LLM -->|stream| Stream
-    Composer -->|5. write data-recall + merge| Page
-    Page -->|渲染：text + 折叠区| User
+    ChatRoute -->|decideMode| Router
+    Router -->|'main'| MainComp
+    Router -->|'interview'| InterviewComp
+    MainComp --> MainPrompt
+    InterviewComp --> InterviewPrompt
+    MainComp & InterviewComp -->|streamText| LLM
+    MainComp -->|write data-recall| Page
+    InterviewComp -->|write data-interview-state| Page
+    Page -->|点击完成| InterviewRoute
+    InterviewRoute -->|POST /v1/.../memories| Hindsight
 
-    style Composer fill:#0f172a,color:#f8fafc
+    style MainComp fill:#0f172a,color:#f8fafc
+    style InterviewComp fill:#064e3b,color:#f8fafc
+    style Router fill:#7c2d12,color:#f8fafc
 ```
 
 **关键设计**：
-- recall 是**同步**调用（composer 内 await），用户期望"问一次答一次"，异步会让 LLM 答跟记忆内容割裂
-- **Composer 是 DI seam**：所有外部副作用（recall / LLM / data part）通过 `ChatDeps` 注入。Phase 2 加面试 Agent 只需在 `route.ts` 里替换 deps（YAGNI：暂不在 composer 里加 mode 分支）
-- `route.ts` 是 thin adapter：parse req → 装配 deps → 调用 `composeChat`，**没有任何业务逻辑**
+
+- **两个 composer，DI seam 复用**：主 agent (`composeChat`) 和 interview agent (`composeInterview`) 共享 `extractUserQuery` + `recallMemories` + `streamText` seam；只有 prompt 和 writeDataPart 不同
+- **mode-router 是纯函数**：仅基于 recall 是否空决定，Phase 3+ 加复杂度分类器时再扩
+- **`/api/chat` 不 retain**：落库走独立的 `/api/interview`，UI 驱动 session（点「完成」才落）。这样 recall 异步落库期间，agent 仍可在 interview 模式里反问
+- **`/api/chat` recall 只调一次**：route 层先 recall 一次，结果既给 router 也给 composer（通过闭包 `recallDep = () => cachedRecall`），避免重复网络 IO
+- recall 是**同步**调用，用户期望"问一次答一次"，异步会让 LLM 答跟记忆内容割裂
 
 ---
 
@@ -79,46 +94,58 @@ flowchart TB
 chatbot/
 ├── app/
 │   ├── api/
-│   │   └── chat/
-│   │       └── route.ts          # Thin adapter：parse + 装配 deps + delegate to composer
+│   │   ├── chat/
+│   │   │   └── route.ts            # Dispatch：recall → mode-router → main / interview composer
+│   │   └── interview/
+│   │       └── route.ts            # POST items=[Q,A...] → retainMemories
 │   ├── layout.tsx                  # 根布局（Geist 字体）
-│   ├── page.tsx                    # Chat UI（useChat + 折叠区）
+│   ├── page.tsx                    # Chat UI：useChat + 折叠区 + interview mode（完成按钮）
 │   └── globals.css                 # Tailwind 入口
 ├── lib/
-│   ├── chat/                       # 编排层（DI seam，Phase 2 复用）
-│   │   ├── composer.ts             # ChatComposer：主 agent 编排
-│   │   └── extract-user-query.ts   # 纯函数：取最后一条 user message 文本（封装 parts 类型 hack）
+│   ├── chat/                       # 编排层（DI seam）
+│   │   ├── composer.ts             # 主 agent composer
+│   │   ├── extract-user-query.ts   # 纯函数：取最后一条 user message 文本
+│   │   ├── mode-router.ts          # decideMode(recall)：main ↔ interview
+│   │   └── interview/              # interview agent 子模块
+│   │       ├── composer.ts         # interview composer（5 步同主，但 emit data-interview-state）
+│   │       └── prompts.ts          # buildInterviewPrompt（反问 prompt）
 │   ├── hindsight.ts                # Hindsight REST 客户端 + buildRecallRequestBody 纯函数
-│   └── system-prompt.ts            # 双层校验 prompt 构建器
-├── tests/                          # Vitest 单测
+│   └── system-prompt.ts            # 主 agent prompt 构建器
+├── tests/                          # Vitest 单测（72 个用例）
 │   ├── lib/
 │   │   ├── chat/
 │   │   │   ├── composer.test.ts
-│   │   │   └── extract-user-query.test.ts
+│   │   │   ├── extract-user-query.test.ts
+│   │   │   ├── mode-router.test.ts
+│   │   │   └── interview/
+│   │   │       ├── composer.test.ts
+│   │   │       └── prompts.test.ts
 │   │   ├── system-prompt.test.ts
 │   │   └── hindsight-recall-body.test.ts
-├── public/                         # 静态资源（Next.js boilerplate）
-├── .env.example                    # 环境变量模板（提交）
-├── .env.local                      # 本地配置（不提交）
+├── public/                         # 静态资源
 ├── next.config.ts                  # Next.js 配置
 ├── tsconfig.json                   # TypeScript 配置
 ├── vitest.config.mts               # 测试配置
 ├── package.json                    # 依赖
-└── README.md                       # Next.js 自带 README（占位）
+└── README.md                       # Next.js 自带 README
 ```
 
 ---
 
 ## 关键文件职责
 
-| 文件 | 行数大概 | 职责 |
+| 文件 | 行数 | 职责 |
 |---|---|---|
-| **`app/page.tsx`** | ~180 | Chat UI。`useChat({transport})` 监听 stream。`MessageBubble` 组件提取 `text` + `data-recall` parts。`RecallSection` 组件渲染折叠区（默认收起，列出 facts / entities / scores） |
-| **`app/api/chat/route.ts`** | ~62 | **Thin adapter**。解析 `messages`、装配 `ChatComposer` 的 deps（`recallMemories` / `buildSystemPrompt` / `streamText(...).toUIMessageStream` / `writeDataPart`）、转发给 `composeChat`。**没有业务逻辑**，5 步流程全部在 composer 里 |
-| **`lib/chat/composer.ts`** | ~110 | `composeChat(messages, deps)` 编排：extract → recall → build prompt → stream LLM → write `data-recall` part + merge。返回 `Response`。所有依赖通过 `ChatDeps` 注入，**Phase 2 面试 Agent 只需换一个 deps**（YAGNI：暂不加 mode 分支） |
+| **`app/page.tsx`** | ~430 | Chat UI。`useChat({transport})` 监听 stream。**Interview mode 状态机**：检测 `data-interview-state` part → 切换 header 文字 + 显示「完成」按钮 → 用户输入时累积 `(question, answer)` pair → 点「完成」POST `/api/interview`。`MessageBubble` 渲染 text + 折叠区 + interview 标识；`RecallSection` 列 facts/entities/scores；`InterviewPairList` 展示本轮累积的 Q/A |
+| **`app/api/chat/route.ts`** | ~110 | Dispatch：parse → `extractUserQuery` → `recallMemories`（**只调一次**）→ `decideMode(recall)` → `composeChat` 或 `composeInterview`（共享 cached recall）。两类 composer 的 deps 都在这里装配 |
+| **`app/api/interview/route.ts`** | ~80 | POST `{items: [{question, answer}, ...]}` → 翻译成 `RetainItem`（`answer` 作 content，`question` 作 context）→ `retainMemories` → ack。zod 校验输入；非空 items 才落库 |
+| **`lib/chat/composer.ts`** | ~110 | `composeChat(messages, deps)` 主 agent 编排：extract → recall → build prompt → stream LLM → write `data-recall` part + merge |
+| **`lib/chat/interview/composer.ts`** | ~110 | `composeInterview(messages, deps)` interview agent 编排：5 步结构同主，但 write `data-interview-state`（`{awaitingAnswer, query, askedAt}`）。Phase 3+ 会扩 session state |
+| **`lib/chat/interview/prompts.ts`** | ~65 | `buildInterviewPrompt({query, recall})` 纯函数。让 LLM 反问一次（不再回答）。覆盖事实/因果/偏好三类 query 的反问策略 |
+| **`lib/chat/mode-router.ts`** | ~26 | `decideMode(recall)` 纯函数：recall 空 → `interview`，否则 `main`。Phase 3+ 会加复杂度分类 |
 | **`lib/chat/extract-user-query.ts`** | ~32 | `extractUserQuery(messages)` 纯函数。封装 `UIMessage.parts` 类型 hack（AI SDK v5 公开类型不暴露 parts，运行时稳定） |
-| **`lib/hindsight.ts`** | ~220 | Hindsight REST 客户端。导出：`recallMemories(query, options?)`、`retainMemories(items)`、`isHindsightHealthy()`，以及纯函数 `buildRecallRequestBody(query, options)`。`request<T>()` 私有 helper 统一错误处理（`HindsightError`）。**默认值合并逻辑全部在 `buildRecallRequestBody` 里，方便单测** |
-| **`lib/system-prompt.ts`** | ~50 | 双层校验 prompt 构建器。`buildSystemPrompt(recall)` 返回完整中文 system message：persona + 长期记忆 section + 引用规则（不编造、优先最新事实） |
+| **`lib/hindsight.ts`** | ~220 | Hindsight REST 客户端。导出：`recallMemories(query, options?)`、`retainMemories(items)`（**Phase 2 v1 才真正被调**）、`isHindsightHealthy()`，以及纯函数 `buildRecallRequestBody(query, options)` |
+| **`lib/system-prompt.ts`** | ~50 | 主 agent 双层校验 prompt 构建器 |
 
 ---
 
@@ -133,6 +160,7 @@ LLM_MODEL=qwen-plus
 ```
 
 **安全约定**：
+
 - `BAILIAN_API_KEY` **永远不写进任何文件**（即使 `.env.local` 在 .gitignore 里）。通过 shell env 注入：`BAILIAN_API_KEY=$BAILIAN_API_KEY npm run dev`，项目根的 `Makefile` 的 `dev` target 已处理
 - `.env.local` 已被 .gitignore（Next.js 默认）
 
@@ -153,7 +181,7 @@ BAILIAN_API_KEY=$BAILIAN_API_KEY npm run dev    # 启动
 BAILIAN_API_KEY=$BAILIAN_API_KEY npm run build  # 生产构建
 
 # 测试 / 类型检查
-npm test              # 跑全部 vitest 用例（46 个）
+npm test              # 跑全部 vitest 用例（72 个）
 npm run test:watch          # watch 模式
 npm run test:coverage       # 覆盖率（v8）
 npm run type-check # tsc --noEmit
@@ -235,7 +263,9 @@ curl -X POST http://localhost:8888/v1/default/banks/zhangwei/memories/recall \
 - ❌ **不要在 `.env.local` 写 `BAILIAN_API_KEY`**——通过 shell env 注入
 - ❌ **不要重新发明 memory**——所有记忆走 Hindsight
 - ❌ **不要把 recall 改成异步**——用户体验依赖同步 recall
-- ❌ **不要在 Phase 1 引入 Mastra / LangGraph**——Phase 3+ 才考虑
+- ❌ **不要绕过 `/api/chat` 直接在客户端 retain**——落库只能走 `/api/interview`
+- ❌ **不要让主 composer 和 interview composer 互相 import**——它们是 seam 的两端，共享纯函数（`extractUserQuery`、`recallMemories`），不共享 compos
+- ❌ **不要在 Phase 2 v1 引入 Mastra / LangGraph**——Phase 3+ 才考虑
 - ❌ **不要直接修改 `app/page.tsx` 用 shadcn/ui / Tailwind UI**——保持原生 Tailwind
 - ❌ **不要硬编码 LLM 模型名**——统一从 `process.env.LLM_MODEL` 读
 
@@ -249,6 +279,17 @@ curl -X POST http://localhost:8888/v1/default/banks/zhangwei/memories/recall \
 - [x] observation 与 raw fact 不重复（`prefer_observations=true` 生效）
 - [x] 中文 recall 验证通过
 - [x] 同一问题连续问 5 次，recall 召回稳定
+
+---
+
+## Phase 2 v1 Done 标准
+
+- [x] recall 空时主 Agent 自动进入访谈模式（mode-router + interview composer）
+- [x] interview 反问单轮，且 emit `data-interview-state` 让 UI 识别
+- [x] UI 累积 `(question, answer)` pair，用户点「完成」POST `/api/interview`
+- [x] `/api/interview` 通过 zod 校验，翻译 `RetainItem` 后 retain 到 Hindsight
+- [x] 下次问同一问题（retain 后等几秒让 Hindsight 抽取完成），recall 能命中 → 回 main flow
+- [x] interview 模式连续多轮（每轮反问一次），pair 累积正确
 
 ---
 
