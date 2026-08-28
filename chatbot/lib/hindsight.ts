@@ -121,6 +121,58 @@ async function request<T>(path: string, body: unknown): Promise<T> {
 }
 
 /**
+ * Build the request body for `/v1/.../memories/recall`. Pure function —
+ * no IO, no env reads, no fetch. Extracted so the default-merging logic
+ * (which encodes product decisions like `min_scores.reranker = 0.3`) can be
+ * tested directly without standing up a Hindsight server.
+ *
+ * Hindsight API quirk: `include.entities` must be an object `{ max_tokens: N }`,
+ * not a boolean. See Hindsight OpenAPI schema for IncludeOptions.entities.
+ */
+export interface RecallRequestBody {
+  query: string;
+  types: FactType[];
+  prefer_observations: boolean;
+  budget: Budget;
+  max_tokens: number;
+  include: {
+    entities: { max_tokens: number } | false;
+  };
+  min_scores: {
+    semantic?: number;
+    keyword?: number;
+    reranker?: number;
+    final?: number;
+  };
+  query_timestamp?: string;
+}
+
+export function buildRecallRequestBody(
+  query: string,
+  options: RecallOptions = {},
+): RecallRequestBody {
+  return {
+    query,
+    types: options.types ?? ["observation", "world"],
+    prefer_observations: options.preferObservations ?? true,
+    budget: options.budget ?? "mid",
+    max_tokens: options.maxTokens ?? 2048,
+    include: {
+      // Hindsight API expects an object { max_tokens: N } when enabling
+      // entity inclusion, not a boolean. See Hindsight OpenAPI schema for
+      // IncludeOptions.entities.
+      entities: options.includeEntities !== false ? { max_tokens: 500 } : false,
+    },
+    // Drop facts the reranker scores below the floor. Default 0.3 keeps
+    // only "actually relevant" results; pass `{}` to disable.
+    min_scores: options.minScores ?? { reranker: 0.3 },
+    ...(options.queryTimestamp
+      ? { query_timestamp: options.queryTimestamp }
+      : {}),
+  };
+}
+
+/**
  * Synchronously recall memories for a query. This is the hot path for the
  * main agent — called on every user message to inject relevant facts into
  * the system prompt before the LLM answers.
@@ -131,26 +183,7 @@ export async function recallMemories(
 ): Promise<RecallResponse> {
   return request<RecallResponse>(
     `/v1/default/banks/${HINDSIGHT_BANK_ID}/memories/recall`,
-    {
-      query,
-      types: options.types ?? ["observation", "world"],
-      prefer_observations: options.preferObservations ?? true,
-      budget: options.budget ?? "mid",
-      max_tokens: options.maxTokens ?? 2048,
-      include: {
-        // Hindsight API expects an object { max_tokens: N } when enabling
-        // entity inclusion, not a boolean. See Hindsight OpenAPI schema for
-        // IncludeOptions.entities.
-        entities:
-          options.includeEntities !== false ? { max_tokens: 500 } : false,
-      },
-      // Drop facts the reranker scores below the floor. Default 0.3 keeps
-      // only "actually relevant" results; pass `{}` to disable.
-      min_scores: options.minScores ?? { reranker: 0.3 },
-      ...(options.queryTimestamp
-        ? { query_timestamp: options.queryTimestamp }
-        : {}),
-    },
+    buildRecallRequestBody(query, options),
   );
 }
 
