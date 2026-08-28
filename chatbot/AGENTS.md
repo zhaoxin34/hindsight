@@ -26,6 +26,7 @@ Phase 2+ 会引入**专家访谈 Agent**（recall 空 + LLM 不确定时触发�
 | **记忆后端** | Hindsight v0.9.2（pgvector + 本地 BGE / MiniLM） | 独立 Docker 容器，通过 REST 调 |
 | **LLM** | 阿里云百炼 `qwen-plus`，OpenAI 兼容模式 | `base_url=https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | **校验** | zod 4 | API schema 校验 |
+| **测试** | Vitest 4 + @vitest/coverage-v8 | 4 个测试文件 / 46 个用例；纯函数 + Composer 注入式单测 |
 | **Node** | ≥20 | Next.js 16 要求 |
 
 **未引入**：React Query、SWR、Redux、shadcn/ui、Tailwind UI、Mastra（**Phase 3 才考虑**）。保持轻。
@@ -38,27 +39,37 @@ Phase 2+ 会引入**专家访谈 Agent**（recall 空 + LLM 不确定时触发�
 flowchart TB
     User([User])
     Page["app/page.tsx<br/>useChat"]
-    Route["app/api/chat/route.ts<br/>POST handler"]
-    HSClient["lib/hindsight.ts<br/>recallMemories"]
+    Route["app/api/chat/route.ts<br/>thin adapter<br/>装配 deps"]
+    Composer["lib/chat/composer.ts<br/>composeChat<br/>★ DI seam"]
+    Extract["extractUserQuery<br/>纯函数"]
+    Recall["lib/hindsight.ts<br/>buildRecallRequestBody<br/>+ recallMemories"]
     Hindsight[(Hindsight<br/>localhost:8888)]
     Prompt["lib/system-prompt.ts<br/>buildSystemPrompt"]
+    Stream["streamText<br/>+ createUIMessageStream"]
     LLM[阿里云百炼<br/>qwen-plus]
 
     User -->|输入| Page
     Page -->|"POST /api/chat<br/>{messages}"| Route
-    Route -->|recall query| HSClient
-    HSClient -->|POST /v1/.../recall| Hindsight
-    Hindsight -->|"{results, entities}"| HSClient
-    HSClient -->|RecallResponse| Route
-    Route -->|recall| Prompt
-    Prompt -->|中文 system message| Route
-    Route -->|streamText| LLM
-    LLM -->|TextDelta stream| Route
-    Route -->|createUIMessageStream<br/>data-recall + text-delta| Page
+    Route -->|composeChat(messages, deps)| Composer
+    Composer -->|1. 抽 query| Extract
+    Composer -->|2. recall query| Recall
+    Recall -->|POST /v1/.../recall| Hindsight
+    Hindsight -->|RecallResponse| Recall
+    Composer -->|3. recall| Prompt
+    Prompt -->|中文 system message| Composer
+    Composer -->|4. streamText| Stream
+    Stream -->|TextDelta| LLM
+    LLM -->|stream| Stream
+    Composer -->|5. write data-recall + merge| Page
     Page -->|渲染：text + 折叠区| User
+
+    style Composer fill:#0f172a,color:#f8fafc
 ```
 
-**关键设计**：recall 是**同步**调用（在 `route.ts` handler 里 await），用户期望"问一次答一次"，异步会让 LLM 答跟记忆内容割裂。
+**关键设计**：
+- recall 是**同步**调用（composer 内 await），用户期望"问一次答一次"，异步会让 LLM 答跟记忆内容割裂
+- **Composer 是 DI seam**：所有外部副作用（recall / LLM / data part）通过 `ChatDeps` 注入。Phase 2 加面试 Agent 只需在 `route.ts` 里替换 deps（YAGNI：暂不在 composer 里加 mode 分支）
+- `route.ts` 是 thin adapter：parse req → 装配 deps → 调用 `composeChat`，**没有任何业务逻辑**
 
 ---
 
@@ -69,18 +80,29 @@ chatbot/
 ├── app/
 │   ├── api/
 │   │   └── chat/
-│   │       └── route.ts          # POST handler：recall + streamText
+│   │       └── route.ts          # Thin adapter：parse + 装配 deps + delegate to composer
 │   ├── layout.tsx                  # 根布局（Geist 字体）
 │   ├── page.tsx                    # Chat UI（useChat + 折叠区）
 │   └── globals.css                 # Tailwind 入口
 ├── lib/
-│   ├── hindsight.ts                # Hindsight REST 客户端
+│   ├── chat/                       # 编排层（DI seam，Phase 2 复用）
+│   │   ├── composer.ts             # ChatComposer：主 agent 编排
+│   │   └── extract-user-query.ts   # 纯函数：取最后一条 user message 文本（封装 parts 类型 hack）
+│   ├── hindsight.ts                # Hindsight REST 客户端 + buildRecallRequestBody 纯函数
 │   └── system-prompt.ts            # 双层校验 prompt 构建器
+├── tests/                          # Vitest 单测
+│   ├── lib/
+│   │   ├── chat/
+│   │   │   ├── composer.test.ts
+│   │   │   └── extract-user-query.test.ts
+│   │   ├── system-prompt.test.ts
+│   │   └── hindsight-recall-body.test.ts
 ├── public/                         # 静态资源（Next.js boilerplate）
 ├── .env.example                    # 环境变量模板（提交）
 ├── .env.local                      # 本地配置（不提交）
 ├── next.config.ts                  # Next.js 配置
 ├── tsconfig.json                   # TypeScript 配置
+├── vitest.config.mts               # 测试配置
 ├── package.json                    # 依赖
 └── README.md                       # Next.js 自带 README（占位）
 ```
@@ -92,8 +114,10 @@ chatbot/
 | 文件 | 行数大概 | 职责 |
 |---|---|---|
 | **`app/page.tsx`** | ~180 | Chat UI。`useChat({transport})` 监听 stream。`MessageBubble` 组件提取 `text` + `data-recall` parts。`RecallSection` 组件渲染折叠区（默认收起，列出 facts / entities / scores） |
-| **`app/api/chat/route.ts`** | ~110 | POST handler。流程：(1) 抽取最后一条 user message 文本；(2) 同步 `recallMemories`；(3) `buildSystemPrompt`；(4) `streamText` 调百炼；(5) `createUIMessageStream` 包装 stream，把 recall metadata 作为 `data-recall` part 一起流出去 |
-| **`lib/hindsight.ts`** | ~155 | Hindsight REST 客户端。导出：`recallMemories(query, options?)`、`retainMemories(items)`、`isHindsightHealthy()`。`request<T>()` 私有 helper 统一错误处理（`HindsightError`） |
+| **`app/api/chat/route.ts`** | ~62 | **Thin adapter**。解析 `messages`、装配 `ChatComposer` 的 deps（`recallMemories` / `buildSystemPrompt` / `streamText(...).toUIMessageStream` / `writeDataPart`）、转发给 `composeChat`。**没有业务逻辑**，5 步流程全部在 composer 里 |
+| **`lib/chat/composer.ts`** | ~110 | `composeChat(messages, deps)` 编排：extract → recall → build prompt → stream LLM → write `data-recall` part + merge。返回 `Response`。所有依赖通过 `ChatDeps` 注入，**Phase 2 面试 Agent 只需换一个 deps**（YAGNI：暂不加 mode 分支） |
+| **`lib/chat/extract-user-query.ts`** | ~32 | `extractUserQuery(messages)` 纯函数。封装 `UIMessage.parts` 类型 hack（AI SDK v5 公开类型不暴露 parts，运行时稳定） |
+| **`lib/hindsight.ts`** | ~220 | Hindsight REST 客户端。导出：`recallMemories(query, options?)`、`retainMemories(items)`、`isHindsightHealthy()`，以及纯函数 `buildRecallRequestBody(query, options)`。`request<T>()` 私有 helper 统一错误处理（`HindsightError`）。**默认值合并逻辑全部在 `buildRecallRequestBody` 里，方便单测** |
 | **`lib/system-prompt.ts`** | ~50 | 双层校验 prompt 构建器。`buildSystemPrompt(recall)` 返回完整中文 system message：persona + 长期记忆 section + 引用规则（不编造、优先最新事实） |
 
 ---
@@ -127,6 +151,13 @@ make clean     # 停 + 清 .next 缓存
 cd chatbot
 BAILIAN_API_KEY=$BAILIAN_API_KEY npm run dev    # 启动
 BAILIAN_API_KEY=$BAILIAN_API_KEY npm run build  # 生产构建
+
+# 测试 / 类型检查
+npm test              # 跑全部 vitest 用例（46 个）
+npm run test:watch          # watch 模式
+npm run test:coverage       # 覆盖率（v8）
+npm run type-check # tsc --noEmit
+npm run lint        # eslint
 ```
 
 ---
@@ -152,9 +183,9 @@ AI SDK v5 里它是 Promise，必须 `await`：
 messages: await convertToModelMessages(messages),
 ```
 
-### 3. `UIMessage` 在 v5 里没有 `parts` 公开类型
+### 3. `UIMessage.parts` 类型 hack 已封装在 `extract-user-query.ts`
 
-读 `message.parts` 时需要 `as unknown as { parts?: ... }` 加 SAFETY 注释。`UIMessage.parts` 实际存在但类型系统不暴露。
+AI SDK v5 的 `UIMessage` 公开类型不暴露 `parts`，但运行时稳定。`lib/chat/extract-user-query.ts` 集中处理这个 cast（带 SAFETY 注释）。**新代码不要再在 route handler 或 UI 组件里直接 cast `parts`**——需要时把逻辑加到 `extractUserQuery()`，保持类型 hack 集中在一处。
 
 ### 4. Hindsight `HINDSIGHT_API_WORKER_ID` 必须固定
 
