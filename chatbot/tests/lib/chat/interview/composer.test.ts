@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  createUIMessageStream,
-  type UIMessage,
-  type UIMessageChunk,
-} from "ai";
+import { createUIMessageStream, type UIMessage, type UIMessageChunk } from "ai";
 import {
   composeInterview,
   type InterviewDeps,
@@ -32,15 +28,14 @@ function makeDeps(overrides: Partial<InterviewDeps> = {}): InterviewDeps {
   const buildPromptMock = vi.fn(
     ({ query }: { query: string }) => `interview-prompt-for:${query}`,
   );
-  const streamLLMMock = vi.fn(
-    async () =>
-      llmStream([
-        { type: "start" },
-        { type: "text-start", id: "t1" },
-        { type: "text-delta", id: "t1", delta: "你是主动离职吗？" },
-        { type: "text-end", id: "t1" },
-        { type: "finish" },
-      ]),
+  const streamLLMMock = vi.fn(async () =>
+    llmStream([
+      { type: "start" },
+      { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "你是主动离职吗？" },
+      { type: "text-end", id: "t1" },
+      { type: "finish" },
+    ]),
   );
   const writeDataPartMock = vi.fn((state: InterviewState) => ({
     type: "data-interview-state" as const,
@@ -87,7 +82,9 @@ describe("composeInterview", () => {
     const deps = makeDeps();
     await composeInterview(baseMessages, deps);
 
-    expect(deps.recall).toHaveBeenCalledExactlyOnceWith("为什么离开 Datatist？");
+    expect(deps.recall).toHaveBeenCalledExactlyOnceWith(
+      "为什么离开 Datatist？",
+    );
     expect(deps.buildPrompt).toHaveBeenCalledExactlyOnceWith({
       query: "为什么离开 Datatist？",
       recall: { results: [] },
@@ -199,9 +196,7 @@ describe("composeInterview", () => {
     const chunks = await readStreamChunks(response);
 
     const types = chunks.map((c) =>
-      typeof c === "object" && c !== null
-        ? (c as { type?: string }).type
-        : "?",
+      typeof c === "object" && c !== null ? (c as { type?: string }).type : "?",
     );
     expect(types).toContain("data-interview-state");
     expect(types).toContain("text-delta");

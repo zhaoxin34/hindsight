@@ -1,8 +1,4 @@
-import {
-  streamText,
-  convertToModelMessages,
-  type UIMessage,
-} from "ai";
+import { streamText, convertToModelMessages, type UIMessage } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { recallMemories } from "@/lib/hindsight";
 import { buildSystemPrompt } from "@/lib/system-prompt";
@@ -43,8 +39,11 @@ function streamDashScopeLLM(system: string, messages: UIMessage[]) {
   // convertToModelMessages is async in current AI SDK v5; await it.
   return (async () => {
     const modelMessages = await convertToModelMessages(messages);
-    return streamText({ model, system, messages: modelMessages })
-      .toUIMessageStream({ sendStart: false });
+    return streamText({
+      model,
+      system,
+      messages: modelMessages,
+    }).toUIMessageStream({ sendStart: false });
   })();
 }
 
@@ -83,9 +82,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const mode = decideMode(recall);
-  const recallDep = recall
-    ? async () => recall!
-    : recallMemories;
+  const recallDep = recall ? async () => recall! : recallMemories;
 
   if (mode === "interview") {
     return composeInterview(messages, {

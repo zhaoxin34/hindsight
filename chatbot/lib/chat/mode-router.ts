@@ -17,11 +17,13 @@ import type { RecallResponse } from "@/lib/hindsight";
 
 export type ChatMode = "main" | "interview";
 
-export function decideMode(recall: RecallResponse | null | undefined): ChatMode {
-  // Defensive: a malformed recall (missing `results`) is treated as empty.
-  // Recall failures already produce { results: [] } upstream, but third-party
-  // callers may pass partial shapes.
-  if (!recall || !Array.isArray(recall.results)) return "interview";
-  if (recall.results.length === 0) return "interview";
-  return "main";
+export function decideMode(
+ recall: RecallResponse | null | undefined,
+): ChatMode {
+ // Defensive: a malformed recall (missing `results`) is treated as empty.
+ // Recall failures already produce { results: [] } upstream, but third-party
+ // callers may pass partial shapes.
+ if (!recall || !Array.isArray(recall.results)) return "interview";
+ if (recall.results.length === 0) return "interview";
+ return "main";
 }

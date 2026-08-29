@@ -2,7 +2,14 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { RecallResponse } from "@/lib/hindsight";
 
 // Shape of `data-recall` and `data-interview-state` parts as written by
@@ -97,8 +104,7 @@ export default function Home() {
       const question =
         lastAssistant &&
         extractText(
-          (lastAssistant as unknown as { parts: ReadonlyArray<unknown> })
-            .parts,
+          (lastAssistant as unknown as { parts: ReadonlyArray<unknown> }).parts,
         ).trim();
       if (question) {
         setInterviewPairs((prev) => [...prev, { question, answer: text }]);
@@ -148,7 +154,9 @@ export default function Home() {
         return;
       }
       setRetainStatus("ok");
-      setRetainMessage(`已记录 ${payload.items_count ?? interviewPairs.length} 条知识`);
+      setRetainMessage(
+        `已记录 ${payload.items_count ?? interviewPairs.length} 条知识`,
+      );
       setInterviewPairs([]);
     } catch (err) {
       setRetainStatus("err");
@@ -261,7 +269,9 @@ export default function Home() {
               }
               className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-40"
             >
-              {retainStatus === "sending" ? "落库中…" : `完成${interviewPairs.length > 0 ? ` (${interviewPairs.length})` : ""}`}
+              {retainStatus === "sending"
+                ? "落库中…"
+                : `完成${interviewPairs.length > 0 ? ` (${interviewPairs.length})` : ""}`}
             </button>
           )}
           <button
