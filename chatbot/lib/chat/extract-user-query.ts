@@ -10,24 +10,24 @@
  * peek into the parts array without re-implementing the message shape.
  */
 export interface ChatMessage {
- role: string;
- parts?: ReadonlyArray<{ type: string; text?: string }>;
- content?: string;
+  role: string;
+  parts?: ReadonlyArray<{ type: string; text?: string }>;
+  content?: string;
 }
 
 export function extractUserQuery(messages: ReadonlyArray<ChatMessage>): string {
- const lastUser = [...messages].reverse().find((m) => m.role === "user");
- if (!lastUser) return "";
- return extractText(lastUser).trim();
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+  if (!lastUser) return "";
+  return extractText(lastUser).trim();
 }
 
 function extractText(message: ChatMessage): string {
- if (Array.isArray(message.parts)) {
-  return message.parts
-   .filter((p) => p.type === "text" && typeof p.text === "string")
-   .map((p) => p.text!)
-   .join("");
- }
- if (typeof message.content === "string") return message.content;
- return "";
+  if (Array.isArray(message.parts)) {
+    return message.parts
+      .filter((p) => p.type === "text" && typeof p.text === "string")
+      .map((p) => p.text!)
+      .join("");
+  }
+  if (typeof message.content === "string") return message.content;
+  return "";
 }

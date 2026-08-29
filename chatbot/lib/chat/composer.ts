@@ -20,10 +20,10 @@
  * caller does not need to know about UIMessageStream plumbing.
  */
 import {
- createUIMessageStream,
- createUIMessageStreamResponse,
- type UIMessage,
- type UIMessageChunk,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  type UIMessage,
+  type UIMessageChunk,
 } from "ai";
 import { extractUserQuery } from "@/lib/chat/extract-user-query";
 import type { RecallResponse } from "@/lib/hindsight";
@@ -36,27 +36,27 @@ import type { RecallResponse } from "@/lib/hindsight";
 export type LLMStream = ReadableStream<UIMessageChunk>;
 
 export interface DataPart {
- /** Must start with `data-` per AI SDK v5's chunk schema. */
- type: `data-${string}`;
- id?: string;
- data: unknown;
- transient?: boolean;
+  /** Must start with `data-` per AI SDK v5's chunk schema. */
+  type: `data-${string}`;
+  id?: string;
+  data: unknown;
+  transient?: boolean;
 }
 
 export interface ChatDeps {
- /** Synchronous recall against Hindsight. */
- recall: (query: string) => Promise<RecallResponse>;
- /** Build the system prompt from a recall response. */
- buildPrompt: (recall: RecallResponse) => string;
- /** Produce the LLM stream given a system prompt and the message history. */
- streamLLM: (
-  system: string,
-  messages: UIMessage[],
- ) => Promise<LLMStream> | LLMStream;
- /** Build the data part that exposes recall metadata to the UI. */
- writeDataPart: (recall: RecallResponse) => DataPart;
- /** Optional logger — defaults to console.log. Inject `() => {}` in tests. */
- logger?: (message: string) => void;
+  /** Synchronous recall against Hindsight. */
+  recall: (query: string) => Promise<RecallResponse>;
+  /** Build the system prompt from a recall response. */
+  buildPrompt: (recall: RecallResponse) => string;
+  /** Produce the LLM stream given a system prompt and the message history. */
+  streamLLM: (
+    system: string,
+    messages: UIMessage[],
+  ) => Promise<LLMStream> | LLMStream;
+  /** Build the data part that exposes recall metadata to the UI. */
+  writeDataPart: (recall: RecallResponse) => DataPart;
+  /** Optional logger — defaults to console.log. Inject `() => {}` in tests. */
+  logger?: (message: string) => void;
 }
 
 /**
@@ -67,44 +67,44 @@ export interface ChatDeps {
  * the LLM still answers, just without memory context.
  */
 export async function composeChat(
- messages: UIMessage[],
- deps: ChatDeps,
+  messages: UIMessage[],
+  deps: ChatDeps,
 ): Promise<Response> {
- const log = deps.logger ?? ((msg: string) => console.log(msg));
+  const log = deps.logger ?? ((msg: string) => console.log(msg));
 
- const query = extractUserQuery(messages);
- if (!query) {
-  throw new Error("Empty user message");
- }
+  const query = extractUserQuery(messages);
+  if (!query) {
+    throw new Error("Empty user message");
+  }
 
- let recall: RecallResponse = { results: [] };
- try {
-  recall = await deps.recall(query);
-  log(
-   `[chat] recall returned ${recall.results.length} facts for query: "${query.slice(0, 60)}"`,
-  );
- } catch (err) {
-  log(`[chat] recall failed, falling back to empty: ${stringifyErr(err)}`);
- }
+  let recall: RecallResponse = { results: [] };
+  try {
+    recall = await deps.recall(query);
+    log(
+      `[chat] recall returned ${recall.results.length} facts for query: "${query.slice(0, 60)}"`,
+    );
+  } catch (err) {
+    log(`[chat] recall failed, falling back to empty: ${stringifyErr(err)}`);
+  }
 
- const system = deps.buildPrompt(recall);
- const llmStream = await deps.streamLLM(system, messages);
+  const system = deps.buildPrompt(recall);
+  const llmStream = await deps.streamLLM(system, messages);
 
- const uiStream = createUIMessageStream({
-  execute({ writer }) {
-   // SAFETY: AI SDK v5's strict UIMessage data-part typing rejects ad-hoc
-   // `data-recall` shapes without a registered UIMessage<DATA_TYPES>. The
-   // composer abstracts that decision behind `writeDataPart` so individual
-   // routes don't have to repeat the cast.
-   const part = deps.writeDataPart(recall);
-   writer.write({ ...part, transient: false });
-   writer.merge(llmStream);
-  },
- });
+  const uiStream = createUIMessageStream({
+    execute({ writer }) {
+      // SAFETY: AI SDK v5's strict UIMessage data-part typing rejects ad-hoc
+      // `data-recall` shapes without a registered UIMessage<DATA_TYPES>. The
+      // composer abstracts that decision behind `writeDataPart` so individual
+      // routes don't have to repeat the cast.
+      const part = deps.writeDataPart(recall);
+      writer.write({ ...part, transient: false });
+      writer.merge(llmStream);
+    },
+  });
 
- return createUIMessageStreamResponse({ stream: uiStream });
+  return createUIMessageStreamResponse({ stream: uiStream });
 }
 
 function stringifyErr(err: unknown): string {
- return err instanceof Error ? err.message : String(err);
+  return err instanceof Error ? err.message : String(err);
 }

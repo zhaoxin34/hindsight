@@ -31,26 +31,30 @@ const TASK_INSTRUCTIONS = `# 你的任务
 - 如果是偏好类（如"你喜欢什么框架？"），反问"在什么场景下？"——把上下文逼出来。`;
 
 function formatFacts(recall: RecallResponse | null | undefined): string {
- if (!recall || !Array.isArray(recall.results) || recall.results.length === 0) {
-  return "（用户的长期记忆中**暂无**与该问题相关的事实 —— 这是为什么你被触发）";
- }
- // Edge case: recall actually returned something. The router chose interview
- // (e.g. user explicitly asked to be interviewed). Honour the facts anyway.
- return recall.results
-  .map(
-   (r, i) =>
-    `${i + 1}. [${r.type === "observation" ? "提炼事实" : r.type === "world" ? "客观事实" : "经历"}] ${r.text}`,
-  )
-  .join("\n");
+  if (
+    !recall ||
+    !Array.isArray(recall.results) ||
+    recall.results.length === 0
+  ) {
+    return "（用户的长期记忆中**暂无**与该问题相关的事实 —— 这是为什么你被触发）";
+  }
+  // Edge case: recall actually returned something. The router chose interview
+  // (e.g. user explicitly asked to be interviewed). Honour the facts anyway.
+  return recall.results
+    .map(
+      (r, i) =>
+        `${i + 1}. [${r.type === "observation" ? "提炼事实" : r.type === "world" ? "客观事实" : "经历"}] ${r.text}`,
+    )
+    .join("\n");
 }
 
 export interface InterviewPromptInput {
- query: string;
- recall: RecallResponse | null | undefined;
+  query: string;
+  recall: RecallResponse | null | undefined;
 }
 
 export function buildInterviewPrompt(input: InterviewPromptInput): string {
- return `${BASE_PERSONA}
+  return `${BASE_PERSONA}
 
 # 用户当前的提问
 

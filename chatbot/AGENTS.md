@@ -23,17 +23,17 @@ Phase 3+ 会引入多轮访谈、复杂度分类器、持久化 session，见 `.
 
 ## 技术栈
 
-| 层 | 选型 | 备注 |
-|---|---|---|
-| **框架** | Next.js 16.3.3（App Router + Turbopack） | 单体部署，前后端共用一个项目 |
-| **语言** | TypeScript 5（strict） | `next.config.ts` 用 `.ts` 后缀 |
-| **UI 库** | React 19.2.8 + Tailwind CSS 4 | 不引入 shadcn/ui，原生 Tailwind 够用 |
-| **AI SDK** | Vercel AI SDK v5：`ai` + `@ai-sdk/react` + `@ai-sdk/openai` | `streamText` + `useChat` + `createUIMessageStream` |
-| **记忆后端** | Hindsight v0.9.2（pgvector + 本地 BGE / MiniLM） | 独立 Docker 容器，通过 REST 调 |
-| **LLM** | 阿里云百炼 `qwen-plus`，OpenAI 兼容模式 | `base_url=https://dashscope.aliyuncs.com/compatible-mode/v1` |
-| **校验** | zod 4 | API schema 校验 |
-| **测试** | Vitest 4 + @vitest/coverage-v8 | 4 个测试文件 / 46 个用例；纯函数 + Composer 注入式单测 |
-| **Node** | ≥20 | Next.js 16 要求 |
+| 层           | 选型                                                        | 备注                                                         |
+| ------------ | ----------------------------------------------------------- | ------------------------------------------------------------ |
+| **框架**     | Next.js 16.3.3（App Router + Turbopack）                    | 单体部署，前后端共用一个项目                                 |
+| **语言**     | TypeScript 5（strict）                                      | `next.config.ts` 用 `.ts` 后缀                               |
+| **UI 库**    | React 19.2.8 + Tailwind CSS 4                               | 不引入 shadcn/ui，原生 Tailwind 够用                         |
+| **AI SDK**   | Vercel AI SDK v5：`ai` + `@ai-sdk/react` + `@ai-sdk/openai` | `streamText` + `useChat` + `createUIMessageStream`           |
+| **记忆后端** | Hindsight v0.9.2（pgvector + 本地 BGE / MiniLM）            | 独立 Docker 容器，通过 REST 调                               |
+| **LLM**      | 阿里云百炼 `qwen-plus`，OpenAI 兼容模式                     | `base_url=https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| **校验**     | zod 4                                                       | API schema 校验                                              |
+| **测试**     | Vitest 4 + @vitest/coverage-v8                              | 4 个测试文件 / 46 个用例；纯函数 + Composer 注入式单测       |
+| **Node**     | ≥20                                                         | Next.js 16 要求                                              |
 
 **未引入**：React Query、SWR、Redux、shadcn/ui、Tailwind UI、Mastra（**Phase 3 才考虑**）。保持轻。
 
@@ -134,18 +134,18 @@ chatbot/
 
 ## 关键文件职责
 
-| 文件 | 行数 | 职责 |
-|---|---|---|
-| **`app/page.tsx`** | ~430 | Chat UI。`useChat({transport})` 监听 stream。**Interview mode 状态机**：检测 `data-interview-state` part → 切换 header 文字 + 显示「完成」按钮 → 用户输入时累积 `(question, answer)` pair → 点「完成」POST `/api/interview`。`MessageBubble` 渲染 text + 折叠区 + interview 标识；`RecallSection` 列 facts/entities/scores；`InterviewPairList` 展示本轮累积的 Q/A |
-| **`app/api/chat/route.ts`** | ~110 | Dispatch：parse → `extractUserQuery` → `recallMemories`（**只调一次**）→ `decideMode(recall)` → `composeChat` 或 `composeInterview`（共享 cached recall）。两类 composer 的 deps 都在这里装配 |
-| **`app/api/interview/route.ts`** | ~80 | POST `{items: [{question, answer}, ...]}` → 翻译成 `RetainItem`（`answer` 作 content，`question` 作 context）→ `retainMemories` → ack。zod 校验输入；非空 items 才落库 |
-| **`lib/chat/composer.ts`** | ~110 | `composeChat(messages, deps)` 主 agent 编排：extract → recall → build prompt → stream LLM → write `data-recall` part + merge |
-| **`lib/chat/interview/composer.ts`** | ~110 | `composeInterview(messages, deps)` interview agent 编排：5 步结构同主，但 write `data-interview-state`（`{awaitingAnswer, query, askedAt}`）。Phase 3+ 会扩 session state |
-| **`lib/chat/interview/prompts.ts`** | ~65 | `buildInterviewPrompt({query, recall})` 纯函数。让 LLM 反问一次（不再回答）。覆盖事实/因果/偏好三类 query 的反问策略 |
-| **`lib/chat/mode-router.ts`** | ~26 | `decideMode(recall)` 纯函数：recall 空 → `interview`，否则 `main`。Phase 3+ 会加复杂度分类 |
-| **`lib/chat/extract-user-query.ts`** | ~32 | `extractUserQuery(messages)` 纯函数。封装 `UIMessage.parts` 类型 hack（AI SDK v5 公开类型不暴露 parts，运行时稳定） |
-| **`lib/hindsight.ts`** | ~220 | Hindsight REST 客户端。导出：`recallMemories(query, options?)`、`retainMemories(items)`（**Phase 2 v1 才真正被调**）、`isHindsightHealthy()`，以及纯函数 `buildRecallRequestBody(query, options)` |
-| **`lib/system-prompt.ts`** | ~50 | 主 agent 双层校验 prompt 构建器 |
+| 文件                                 | 行数 | 职责                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`app/page.tsx`**                   | ~430 | Chat UI。`useChat({transport})` 监听 stream。**Interview mode 状态机**：检测 `data-interview-state` part → 切换 header 文字 + 显示「完成」按钮 → 用户输入时累积 `(question, answer)` pair → 点「完成」POST `/api/interview`。`MessageBubble` 渲染 text + 折叠区 + interview 标识；`RecallSection` 列 facts/entities/scores；`InterviewPairList` 展示本轮累积的 Q/A |
+| **`app/api/chat/route.ts`**          | ~110 | Dispatch：parse → `extractUserQuery` → `recallMemories`（**只调一次**）→ `decideMode(recall)` → `composeChat` 或 `composeInterview`（共享 cached recall）。两类 composer 的 deps 都在这里装配                                                                                                                                                                      |
+| **`app/api/interview/route.ts`**     | ~80  | POST `{items: [{question, answer}, ...]}` → 翻译成 `RetainItem`（`answer` 作 content，`question` 作 context）→ `retainMemories` → ack。zod 校验输入；非空 items 才落库                                                                                                                                                                                             |
+| **`lib/chat/composer.ts`**           | ~110 | `composeChat(messages, deps)` 主 agent 编排：extract → recall → build prompt → stream LLM → write `data-recall` part + merge                                                                                                                                                                                                                                       |
+| **`lib/chat/interview/composer.ts`** | ~110 | `composeInterview(messages, deps)` interview agent 编排：5 步结构同主，但 write `data-interview-state`（`{awaitingAnswer, query, askedAt}`）。Phase 3+ 会扩 session state                                                                                                                                                                                          |
+| **`lib/chat/interview/prompts.ts`**  | ~65  | `buildInterviewPrompt({query, recall})` 纯函数。让 LLM 反问一次（不再回答）。覆盖事实/因果/偏好三类 query 的反问策略                                                                                                                                                                                                                                               |
+| **`lib/chat/mode-router.ts`**        | ~26  | `decideMode(recall)` 纯函数：recall 空 → `interview`，否则 `main`。Phase 3+ 会加复杂度分类                                                                                                                                                                                                                                                                         |
+| **`lib/chat/extract-user-query.ts`** | ~32  | `extractUserQuery(messages)` 纯函数。封装 `UIMessage.parts` 类型 hack（AI SDK v5 公开类型不暴露 parts，运行时稳定）                                                                                                                                                                                                                                                |
+| **`lib/hindsight.ts`**               | ~220 | Hindsight REST 客户端。导出：`recallMemories(query, options?)`、`retainMemories(items)`（**Phase 2 v1 才真正被调**）、`isHindsightHealthy()`，以及纯函数 `buildRecallRequestBody(query, options)`                                                                                                                                                                  |
+| **`lib/system-prompt.ts`**           | ~50  | 主 agent 双层校验 prompt 构建器                                                                                                                                                                                                                                                                                                                                    |
 
 ---
 
@@ -196,9 +196,15 @@ npm run lint        # eslint
 
 ```typescript
 // ❌ 错（触发 422）
-include: { entities: true }
+include: {
+  entities: true;
+}
 // ✅ 对
-include: { entities: { max_tokens: 500 } }
+include: {
+  entities: {
+    max_tokens: 500;
+  }
+}
 ```
 
 错误信息：`Input should be a valid dictionary or object to extract fields from`
