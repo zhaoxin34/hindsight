@@ -86,6 +86,24 @@ export interface RetainResponse {
   };
 }
 
+/** A single candidate fact produced by dry-run extraction (no persistence). */
+export interface ExtractedFact {
+  text: string;
+  fact_type: "world" | "experience";
+  occurred_start: string | null;
+  occurred_end: string | null;
+  entities: string[];
+}
+
+export interface DryRunExtractResponse {
+  facts: ExtractedFact[];
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+  };
+}
+
 export class HindsightError extends Error {
   constructor(
     public readonly status: number,
@@ -96,12 +114,16 @@ export class HindsightError extends Error {
   }
 }
 
-async function request<T>(path: string, body: unknown): Promise<T> {
+async function request<T>(
+  method: "POST" | "PATCH",
+  path: string,
+  body: unknown,
+): Promise<T> {
   const url = `${HINDSIGHT_API_URL}${path}`;
   let res: Response;
   try {
     res = await fetch(url, {
-      method: "POST",
+      method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
@@ -182,6 +204,7 @@ export async function recallMemories(
   options: RecallOptions = {},
 ): Promise<RecallResponse> {
   return request<RecallResponse>(
+    "POST",
     `/v1/default/banks/${HINDSIGHT_BANK_ID}/memories/recall`,
     buildRecallRequestBody(query, options),
   );
@@ -196,6 +219,7 @@ export async function retainMemories(
   items: RetainItem[],
 ): Promise<RetainResponse> {
   return request<RetainResponse>(
+    "POST",
     `/v1/default/banks/${HINDSIGHT_BANK_ID}/memories`,
     { items },
   );
@@ -214,4 +238,39 @@ export async function isHindsightHealthy(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Invalidate a memory unit (Phase 3 Q4 conflict-resolution "serious" path).
+ * The fact text and downstream observations/links are dropped, but the row
+ * is kept for audit (reversible via the same PATCH endpoint).
+ *
+ * Reference: Hindsight OpenAPI `PATCH /v1/.../memories/{memory_id}` — the
+ * 2026-08-29 API smoke test confirmed this is the only way to remove a
+ * fact from recall without deleting the row.
+ */
+export async function invalidateMemory(memoryId: string): Promise<void> {
+  await request<unknown>(
+    "PATCH",
+    `/v1/default/banks/${HINDSIGHT_BANK_ID}/memories/${memoryId}`,
+    { state: "invalidated" },
+  );
+}
+
+/**
+ * Dry-run fact extraction (Phase 3 IA-4 preview). The LLM extracts
+ * candidate facts from `content` exactly as it would for retain, but
+ * nothing is written. Returns the candidate facts so the caller can show
+ * them to the expert before committing (Phase 5 review UI).
+ */
+export async function dryRunExtract(
+  content: string,
+  context: string,
+): Promise<ExtractedFact[]> {
+  const res = await request<DryRunExtractResponse>(
+    "POST",
+    `/v1/default/banks/${HINDSIGHT_BANK_ID}/memories/dry-run-extract`,
+    { content, context },
+  );
+  return res.facts;
 }

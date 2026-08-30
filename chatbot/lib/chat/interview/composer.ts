@@ -38,6 +38,8 @@ export interface InterviewState {
   awaitingAnswer: true;
   query: string;
   askedAt: number;
+  /** Optional Phase 3 classification hint for the UI. */
+  classification?: import("@/lib/chat/classifier/types").Classification;
 }
 
 export interface DataPart {
@@ -62,6 +64,15 @@ export interface InterviewDeps {
   writeDataPart: (state: InterviewState) => DataPart;
   /** Optional logger — defaults to console.log. Inject `() => {}` in tests. */
   logger?: (message: string) => void;
+  /**
+   * Optional ComplexityClassifier (Phase 3). When provided, the composer
+   * uses the classification to enrich the interview-state payload so the
+   * UI can adapt (e.g. show a 5-round indicator for abstract questions).
+   * Multi-turn routing itself is decided upstream in mode-router.
+   */
+  classify?: (
+    query: string,
+  ) => Promise<import("@/lib/chat/classifier/types").Classification>;
 }
 
 export async function composeInterview(
@@ -90,11 +101,25 @@ export async function composeInterview(
   const system = deps.buildPrompt({ query, recall });
   const llmStream = await deps.streamLLM(system, messages);
 
-  const state: InterviewState = {
+  let state: InterviewState = {
     awaitingAnswer: true,
     query,
     askedAt: Date.now(),
   };
+
+  // Phase 3: optionally enrich the state with a classification hint so the
+  // UI can show a 5-round indicator for abstract questions, etc. Multi-
+  // turn routing itself is decided upstream in mode-router, not here.
+  if (deps.classify) {
+    try {
+      const classification = await deps.classify(query);
+      state = { ...state, classification };
+    } catch (err) {
+      log(
+        `[interview] classify failed, continuing without hint: ${stringifyErr(err)}`,
+      );
+    }
+  }
 
   const uiStream = createUIMessageStream({
     execute({ writer }) {
