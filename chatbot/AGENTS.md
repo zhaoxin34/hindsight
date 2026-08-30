@@ -305,3 +305,67 @@ curl -X POST http://localhost:8888/v1/default/banks/zhangwei/memories/recall \
 - `../docker-compose.yml` — Hindsight 后端部署
 - `../Makefile` — 服务管理命令（restart / status / logs / clean）
 - [vectorize-io/hindsight](https://github.com/vectorize-io/hindsight) — Hindsight 后端仓库
+
+---
+
+## Phase 3 多轮访谈（2026-08-29 已完成）
+
+Phase 3 在 Phase 2 单轮基础上升级到多轮（3-5 轮追问）。下面是 Phase 3 引入的新模块、新端点、新环境变量。
+
+### Phase 3 关键决策
+
+- **Q2**：访谈 Agent 复用主 Agent 的 `qwen-plus`（与主 Agent 统一模型，DI seam 复用同一 LLM 客户端）
+- **Q3**：知识卡 schema 借鉴 matrix 项目萃取流程 §6.6
+- **Q4**：矛盾访谈显式提示专家 + 让专家判定「口误/认真」 + 认真走 PATCH + POST 替换
+- **Complexity Classifier**：接口化（Strategy pattern），默认启发式 + LLM fallback
+- **不用 workflow 引擎**：纯函数 state machine `nextTurn` (~200 LOC)
+- **不用 Hindsight PG**：session 存 host `postgres` 容器（独立 schema `chatbot_interview`）
+
+### Phase 3 新增模块
+
+| 模块                  | 路径                                                                | 职责                                                                  |
+| --------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Complexity Classifier | `lib/chat/classifier/{types,rule-based,llm,hybrid,fallback-log}.ts` | Strategy pattern，启发式 10 条规则 + LLM fallback                     |
+| State Machine         | `lib/chat/interview/{state,strategies,state-machine}.ts`            | `nextTurn(state, action, deps)` 纯函数 + 4 类事件追问模板             |
+| Conflict Resolution   | `lib/chat/interview/conflict.ts`                                    | Q4 矛盾检测 + PATCH+POST 替换 + post-replacement 验证                 |
+| Session Storage       | `lib/db/{client,sessions}.ts`                                       | postgres-js 连接池 + 5 个 CRUD 纯函数                                 |
+| Hindsight 扩展        | `lib/hindsight.ts`                                                  | `invalidateMemory()` + `dryRunExtract()`                              |
+| Session 持久化 schema | `db/migrations/001_*.sql`, `002_*.sql`                              | `chatbot_interview.interview_sessions` + `classifier_fallback_log` 表 |
+| 多轮 UI 组件          | `app/_components/MultiTurnPanel.tsx`                                | idle/active/conflict/finished/abandoned 五种状态渲染                  |
+| React Hook            | `lib/chat/interview/use-session.ts`                                 | 封装 `/api/interview/session/*` 调用 + 本地状态机                     |
+| Cleanup Script        | `scripts/cleanup-stale-sessions.ts`                                 | TTL 过期 abandoned session 清理（cron 调度）                          |
+
+### Phase 3 新增 API 端点
+
+| 端点                                  | 方法  | 用途                                            |
+| ------------------------------------- | ----- | ----------------------------------------------- |
+| `/api/interview/session`              | POST  | 创建 session + 第一轮反问                       |
+| `/api/interview/session?session_id=X` | GET   | 恢复 session（refresh 后）                      |
+| `/api/interview/session`              | PATCH | 推进 session（user_answer / conflict_decision） |
+| `/api/interview/session/[id]/finish`  | POST  | 专家点「够了」走 retain                         |
+| `/api/interview/session/[id]/abandon` | POST  | 专家点「放弃」清空 session                      |
+
+**Feature flag**：`ENABLE_MULTI_TURN_INTERVIEW`（默认 `false`）— flag 关闭时所有 Phase 3 端点返回 404，Phase 2 单轮行为完全保留。
+
+### Phase 3 新增环境变量
+
+```bash
+ENABLE_MULTI_TURN_INTERVIEW=true             # Phase 3 开关（默认 false）
+CHATBOT_DATABASE_URL=postgresql://...        # chatbot session 存储的 PG（默认 host postgres:5432）
+```
+
+### Phase 3 Done 标准
+
+- [x] 抽象问题（"为什么 Rust 这样设计"）能追问 3-5 轮
+- [x] 简单事实类问题保持单轮
+- [x] session 跨刷新/关 tab/换设备能续上（Postgres 持久化）
+- [x] Q4 矛盾访谈：用户判定"认真"后 PATCH 老 fact + retain 新 fact
+- [x] Complexity Classifier 接口化（启发式 + LLM fallback）
+- [x] 专家主动控制：「够了」/「放弃」按钮贯穿多轮
+- [x] 现有 72 个 vitest 用例不受影响（flag off 时 Phase 2 行为完全不变）
+
+### 累计测试规模
+
+- Phase 2: 72 个用例
+- Phase 3 新增: ~114 个用例
+- **总计**: 186 个用例全部通过
