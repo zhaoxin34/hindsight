@@ -4,6 +4,7 @@ out
 build
 coverage
 package-lock.json
+pnpm-lock.yaml
 *.min.js
 *.min.ts
 public

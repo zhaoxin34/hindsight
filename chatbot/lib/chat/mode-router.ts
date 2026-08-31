@@ -15,13 +15,13 @@
  *
  * Feature flag: when `multiTurnEnabled` is false, the async function
  * falls back to the Phase 2 binary logic. The flag is read at call time
- * (not module load) so tests can override it via `setMultiTurnEnabled` /
- * `withMultiTurnEnabled` without `vi.mock` leakage.
+ * (not module load) via `isMultiTurnEnabledLive()` so tests can override
+ * it via `setMultiTurnEnabledForTest` without `vi.mock` leakage.
  */
 
 import type { ComplexityClassifier } from "@/lib/chat/classifier/types";
 import type { RecallResponse } from "@/lib/hindsight";
-import { isMultiTurnEnabled } from "@/app/api/interview/_lib/config";
+import { isMultiTurnEnabledLive } from "@/app/api/interview/_lib/config";
 
 export type ChatMode = "main" | "interview";
 
@@ -55,7 +55,7 @@ export async function decideModeWithClassifier(
   query: string,
   recall: RecallResponse | null | undefined,
   classifier: ComplexityClassifier,
-  enabled: boolean = isMultiTurnEnabled(),
+  enabled: boolean = isMultiTurnEnabledLive(),
 ): Promise<ModeDecision> {
   // Flag off: behave like Phase 2.
   if (!enabled) {

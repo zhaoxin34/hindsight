@@ -1,9 +1,8 @@
 # Hindsight Chatbot — service management
-# Primary purpose: restart the Next.js dev server (the npm service).
+# Primary purpose: restart the Next.js dev server (the pnpm service).
 
 CHATBOT_DIR  := chatbot
 LOG_FILE     := /tmp/claude/next-dev.log
-PID_FILE     := /tmp/claude/next-dev.pid
 
 .PHONY: dev stop restart status logs clean help
 
@@ -14,17 +13,20 @@ help: ## List available commands
 
 # dev is the workhorse: kill any running instance, then start fresh.
 # `restart` is just an alias — same effect, friendlier name for the main flow.
+#
+# Implementation note: we spawn `pnpm dev` via `python3 -c 'os.setsid()...'`
+# instead of `nohup ... &` so that pnpm/next-dev runs in its own session and
+# process group. Without this, when the parent shell exits (e.g. a CI/agent
+# timeout), the SIGTERM goes to the whole process group and kills the dev
+# server. macOS does not ship a `setsid(1)` binary, so we use Python's
+# os.setsid() syscall wrapper.
 dev stop: ## Internal: kill any running dev server
 	pkill -f "next dev" 2>/dev/null && echo "✅ stopped" || echo "⚠️  no dev server running"
-	@-rm -f $(PID_FILE)
 
-dev: stop ## Start the dev server (kills any existing instance first)
+dev: stop ## Start the dev server (returns immediately — use `make logs` to tail output)
 	@echo "🚀 Starting dev server in $(CHATBOT_DIR)..."
-	@cd $(CHATBOT_DIR) && BAILIAN_API_KEY="$$BAILIAN_API_KEY" nohup npm run dev > $(LOG_FILE) 2>&1 &
-	@echo $$! > $(PID_FILE)
-	@sleep 4
-	@echo "📋 log: $(LOG_FILE)"
-	@tail -8 $(LOG_FILE)
+	@cd $(CHATBOT_DIR) && BAILIAN_API_KEY="$$BAILIAN_API_KEY" python3 -c "import os, subprocess; os.setsid(); subprocess.Popen(['pnpm', 'dev'], stdin=subprocess.DEVNULL, stdout=open('$(LOG_FILE)', 'w'), stderr=subprocess.STDOUT)"
+	@echo "📋 log: $(LOG_FILE) — run 'make logs' to follow, 'make status' to check health"
 
 restart: dev ## Restart the dev server (main target)
 

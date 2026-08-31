@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# package manager: this project uses pnpm (pnpm-lock.yaml is committed).
+# Ignore npm's lockfile so stray invocations don't pollute the tree.
+/package-lock.json
