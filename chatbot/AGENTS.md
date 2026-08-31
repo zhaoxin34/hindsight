@@ -319,7 +319,7 @@ Phase 3 在 Phase 2 单轮基础上升级到多轮（3-5 轮追问）。下面�
 - **Q4**：矛盾访谈显式提示专家 + 让专家判定「口误/认真」 + 认真走 PATCH + POST 替换
 - **Complexity Classifier**：接口化（Strategy pattern），默认启发式 + LLM fallback
 - **不用 workflow 引擎**：纯函数 state machine `nextTurn` (~200 LOC)
-- **不用 Hindsight PG**：session 存 host `postgres` 容器（独立 schema `chatbot_interview`）
+- **复用 Hindsight 的 PG**：session 存 host `hindsight` 库（独立 schema `chatbot_interview`，与 Hindsight `public` schema 隔离）
 
 ### Phase 3 新增模块
 
@@ -351,7 +351,7 @@ Phase 3 在 Phase 2 单轮基础上升级到多轮（3-5 轮追问）。下面�
 
 ```bash
 ENABLE_MULTI_TURN_INTERVIEW=true             # Phase 3 开关（默认 false）
-CHATBOT_DATABASE_URL=postgresql://...        # chatbot session 存储的 PG（默认 host postgres:5432）
+CHATBOT_DATABASE_URL=postgresql://...        # chatbot session 存储的 PG（默认 host hindsight:5432）
 ```
 
 ### Phase 3 Done 标准

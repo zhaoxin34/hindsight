@@ -42,7 +42,7 @@ BAILIAN_API_KEY=sk-xxx                      # 阿里云百炼 API key（必填�
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL=qwen-plus
 ENABLE_MULTI_TURN_INTERVIEW=false             # Phase 3 开关（默认 false）
-CHATBOT_DATABASE_URL=postgresql://...        # Phase 3 session 存储（默认 host postgres:5432）
+CHATBOT_DATABASE_URL=postgresql://...        # Phase 3 session 存储（默认 host hindsight:5432）
 ```
 
 ## Phase 3 端到端流程

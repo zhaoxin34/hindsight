@@ -1,13 +1,13 @@
 /**
  * Postgres client singleton for chatbot session storage.
  *
- * Phase 3 introduces a separate `chatbot_interview` schema in the host
- * `postgres` container (see design.md D1). This client connects to that
- * same container but uses the default `postgres` database — Hindsight's own
- * PG is not exposed to the host, so we deliberately decoupled storage.
+ * Phase 3 introduces a `chatbot_interview` schema in the host `hindsight`
+ * database (see design.md D1). Hindsight also lives in the same container
+ * but uses its own `public` schema, so the two are isolated at the schema
+ * level inside a single database.
  *
  * Configuration (env vars):
- *   CHATBOT_DATABASE_URL — defaults to the local dev `postgres` container.
+ *   CHATBOT_DATABASE_URL — defaults to the local dev `hindsight` database.
  *
  * The singleton is cached on `globalThis` to survive Next.js dev-mode hot
  * reload, which otherwise creates a new pool per code change and exhausts
@@ -17,7 +17,7 @@
 import postgres from "postgres";
 
 const DEFAULT_DATABASE_URL =
-  "postgresql://postgres:postgres@localhost:5432/postgres";
+  "postgresql://postgres:postgres@localhost:5432/hindsight";
 
 declare global {
   var __chatbotSql: ReturnType<typeof postgres> | undefined;

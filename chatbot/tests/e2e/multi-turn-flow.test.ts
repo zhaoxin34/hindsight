@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
  * Requires:
  *   - Hindsight running at HINDSIGHT_API_URL (default localhost:8888)
  *   - ENABLE_MULTI_TURN_INTERVIEW=true
- *   - Postgres at CHATBOT_DATABASE_URL (default localhost:5432/postgres)
+ *   - Postgres at CHATBOT_DATABASE_URL (default localhost:5432/hindsight)
  *
  * Skipped automatically when Hindsight is unreachable so this doesn't
  * break CI that doesn't have the full stack.
