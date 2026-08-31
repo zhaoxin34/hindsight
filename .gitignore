@@ -50,3 +50,5 @@ pgdata/
 
 # --- Docker（compose 文件本身要提交）---
 .docker-volumes/
+.pi/plans
+.pi/tasks
